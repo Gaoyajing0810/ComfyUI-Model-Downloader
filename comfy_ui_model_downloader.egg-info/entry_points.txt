@@ -1,2 +1,0 @@
-[console_scripts]
-comfy-ui-model-downloader = comfy_model_downloader.cli:main

@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+comfy_ui_model_downloader.egg-info/
+.eggs/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build intermediates (PyInstaller + asset pipeline)
+build/pyinstaller/
+assets/icon.iconset/
+
+# Local config / secrets
+.env
+.env.local
+*.local.toml
+
+# Tooling caches
+.codegraph/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime artifacts
+generated/
+/tmp/
+*.log

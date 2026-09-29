@@ -60,6 +60,7 @@ assets/icon.iconset/
 .codegraph/
 .mypy_cache/
 .ruff_cache/
+.omo/
 
 # Runtime artifacts
 generated/

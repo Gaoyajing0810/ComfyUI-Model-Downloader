@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ComfyUI Model Downloader — brand mark
+
+  Geometric monogram "M" whose right leg extends into a downward arrow,
+  fusing the brand initial with the product action ("download model").
+  Brand-aligned to the dark engineering-console palette already used by the
+  web UI (--bg-0 / --fg-0 / --ac).
+
+  Constructed in a 1024x1024 design grid; the SVG scales losslessly.
+  Coordinates mirror the PIL master in assets/render_logo.py — keep both in
+  sync if you edit either.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"
+     fill="none" role="img" aria-label="ComfyUI Model Downloader">
+  <title>ComfyUI Model Downloader</title>
+
+  <!-- M body: left foot → left apex → mid valley → right apex → right foot -->
+  <polyline
+    points="170,620 250,180 512,420 774,180 854,620"
+    stroke="#E7EEF6"
+    stroke-width="64"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+    stroke-linecap="square" />
+
+  <!-- Arrow shaft: right foot of M continues straight down -->
+  <line
+    x1="854" y1="620" x2="854" y2="880"
+    stroke="#E7EEF6"
+    stroke-width="64"
+    stroke-linecap="square" />
+
+  <!-- Arrowhead in accent — the only chromatic mark on the page -->
+  <polyline
+    points="759,770 854,880 949,770"
+    stroke="#5CC8D8"
+    stroke-width="64"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+    stroke-linecap="square" />
+</svg>

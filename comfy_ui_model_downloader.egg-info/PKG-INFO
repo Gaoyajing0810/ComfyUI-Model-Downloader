@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: comfy-ui-model-downloader
+Version: 0.1.5
+Summary: ComfyUI Model Downloader —— 解析 ComfyUI 工作流所需模型，从 ModelScope 魔搭社区下载到本地模型目录并校验完整性
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.27
+Requires-Dist: pydantic>=2.6
+Requires-Dist: click>=8.1
+Requires-Dist: httpx>=0.27
+Requires-Dist: modelscope>=1.18
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Dynamic: license-file

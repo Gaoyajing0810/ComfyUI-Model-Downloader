@@ -1,0 +1,5 @@
+[console_scripts]
+modelscope = modelscope_hub.cli.main:run_cmd
+modelscope-hub = modelscope_hub.cli.main:run_cmd
+ms = modelscope_hub.cli.main:run_cmd
+ms-hub = modelscope_hub.cli.main:run_cmd

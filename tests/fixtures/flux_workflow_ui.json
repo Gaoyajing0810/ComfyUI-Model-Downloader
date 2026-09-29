@@ -1,0 +1,107 @@
+{
+  "last_node_id": 14,
+  "last_link_id": 12,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "UNETLoader",
+      "pos": [40, 60],
+      "size": [315, 98],
+      "widgets_values": ["flux1-dev.safetensors", "default"],
+      "title": "加载 FLUX.1 主模型"
+    },
+    {
+      "id": 2,
+      "type": "DualCLIPLoader",
+      "pos": [40, 200],
+      "size": [315, 166],
+      "widgets_values": ["clip_l.safetensors", "t5xxl_fp8_e4m3fn.safetensors", "flux", "default"]
+    },
+    {
+      "id": 3,
+      "type": "VAELoader",
+      "pos": [40, 410],
+      "size": [315, 58],
+      "widgets_values": ["ae.safetensors"]
+    },
+    {
+      "id": 4,
+      "type": "LoraLoader",
+      "pos": [430, 120],
+      "size": [315, 166],
+      "widgets_values": [
+        "flux-detail-sldr-b1.safetensors",
+        0.8,
+        0.8,
+        "Detail Slider"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "LoraLoader",
+      "pos": [430, 330],
+      "size": [315, 166],
+      "widgets_values": [
+        "flux-realism-lora.safetensors",
+        0.6,
+        0.6,
+        "Realism"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "ControlNetLoader",
+      "pos": [40, 510],
+      "size": [315, 98],
+      "widgets_values": ["canny_xl_canny.safetensors", 1.0]
+    },
+    {
+      "id": 7,
+      "type": "CLIPVisionLoader",
+      "pos": [800, 60],
+      "size": [300, 106],
+      "widgets_values": ["CLIP-ViT-H-14-laion2B-s32E-b79K.safetensors"]
+    },
+    {
+      "id": 8,
+      "type": "CLIPTextEncode",
+      "pos": [430, 540],
+      "size": [422, 164],
+      "widgets_values": ["电影感人像，柔和侧光，浅景深，85mm 镜头，8k 超清 -- no watermark"]
+    },
+    {
+      "id": 9,
+      "type": "CLIPTextEncode",
+      "pos": [430, 730],
+      "size": [422, 164],
+      "widgets_values": ["低质量，最差质量，模糊，畸形手指"]
+    },
+    {
+      "id": 10,
+      "type": "KSampler",
+      "pos": [880, 240],
+      "size": [315, 262],
+      "widgets_values": [0, "randomize", 20, 0.8, 0.1, 1, "euler", "simple", 0]
+    },
+    {
+      "id": 11,
+      "type": "SaveImage",
+      "pos": [1250, 240],
+      "size": [400, 450],
+      "widgets_values": ["ComfyUI"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 4, 0, "MODEL"],
+    [2, 2, 0, 4, 1, "CLIP"],
+    [3, 2, 1, 4, 2, "CLIP"],
+    [4, 4, 0, 10, 0, "MODEL"],
+    [5, 4, 1, 10, 1, "CLIP"],
+    [6, 8, 0, 10, 2, "CONDITIONING"],
+    [7, 9, 0, 10, 3, "CONDITIONING"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

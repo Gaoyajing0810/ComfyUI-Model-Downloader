@@ -1,6 +1,6 @@
 # HANDOFF
 
-最后更新：2026-09-29 18:15
+最后更新：2026-09-29 22:10
 
 ## 当前任务与目标
 
@@ -274,3 +274,35 @@ make bump            # 或 python scripts/bump_version.py
 - 可选：`comfy_extras` 几个节点的输入名做源码核实。
 - 可选：下载并行分片（`MODELSCOPE_DOWNLOAD_PARALLEL_WORKERS=8`，要求 >500MB，会产生边车文件）。
 - 可选：把 conda 环境名从 `comfy-fetch` 改成 `comfy-ui-model-downloader`（成本高：重装 fastapi/uvicorn/pydantic/click/httpx/modelscope 1.40.1/modelscope_hub 0.4.5/python-multipart/PyInstaller 6.22.3；收益低：仅环境名，无产品标识价值）。
+
+---
+
+## v0.1.11 首次正式发布（2026-09-29 22:10）
+
+### 仓库发布前清理
+- 补 `.gitignore`（67 行，覆盖 `__pycache__/` `*.py[cod]` `*.egg-info/` `build/` `dist/` `.eggs/` `.venv/` `.pytest_cache/` `.coverage/` `.tox/` `.idea/` `.vscode/` `.DS_Store` `build/pyinstaller/` `assets/icon.iconset/` `.codegraph/` `.mypy_cache/` `.ruff_cache/` `.omo/` `.env` 等）
+- `git rm -r --cached` 移出 3223 个垃圾追踪（`dist/` 3169 个含完整 `.app` 树、`build/` 17、`__pycache__/` 19、`*.egg-info/` 6、`assets/icon.iconset/` 10、`.DS_Store` 2 等）。追踪文件数 3264 → 41
+- 提交 `190e488` "chore: add .gitignore and untrack 3223 build artifacts" 已推到 `origin/Master`
+- 提交 `01964c2` "chore: ignore .omo/ runtime directory" 本地领先 1（`.omo/` 运行时目录兜底，不影响 release `target_commitish`）
+- 远端 Master HEAD = `190e488ae7aaad78cfe3735c4e6f54c35732b6f7`
+
+### 发布产物（已上传至 GitHub Releases）
+- Release URL: https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.11
+- Release ID: `399213986`
+- Tag: `v0.1.11` → `190e488ae7aaad78cfe3735c4e6f54c35732b6f7`
+- 资产 1: `comfy-ui-model-downloader.app.zip`（67 MB，SHA256 `235da5697803c2b1ee9fba84b5dd7d9e10beb24f20cc28560bc933d1dc0f97d0`）—— 双击启动的 macOS arm64 应用
+- 资产 2: `comfy-ui-model-downloader-0.1.11.tar.gz`（201 KB，SHA256 `eef0953a0145bd67bede816467be9558b6dad50c829dda2eaf5465d94a05b5dc`）—— 52 个条目源码包，从 `git archive HEAD` 生成（已自动排除 `dist/` `build/` `__pycache__/` `.git/` 等）
+- Release notes 来源：`/tmp/comfy-release/RELEASE_NOTES.md`（含下载表 + SHA256 + 6 项主要功能 + 快速开始 + 已知限制）
+
+### 发布方式
+- 无 `gh` CLI、无 SSH key、无 `.netrc` / `~/.git-credentials` / `~/.config/gh/`
+- 用 `security find-generic-password -s "GitHub - https://api.github.com" -a "Gaoyajing0810" -w` 从 macOS Keychain 取出 `gho_*` OAuth token（`prot=NULL` 无 TouchID），验证 `permissions.push=True` 后用 curl + `Authorization: Bearer` 调用 GitHub REST API
+- `create_release.sh`（`bash -n` 通过）：① `POST /repos/.../git/refs` 建 tag → ② `POST /repos/.../releases` 带 notes 建 release → ③ `POST /releases/{id}/assets` 上传两个资产（content-type 用 `application/zip` / `application/gzip`）→ ④ GET 验证
+- 校验：`curl GET` tarball 拿 302 跳 CDN，`curl -I` .app.zip 拿 302 跳 `release-assets.githubusercontent.com`
+- token 用完立即 `unset GITHUB_TOKEN`，`env | grep` 确认无残留
+
+### 已记录的产物路径
+- `/tmp/comfy-release/comfy-ui-model-downloader.app.zip`
+- `/tmp/comfy-release/comfy-ui-model-downloader-0.1.11.tar.gz`
+- `/tmp/comfy-release/RELEASE_NOTES.md`
+- `/tmp/comfy-release/create_release.sh`

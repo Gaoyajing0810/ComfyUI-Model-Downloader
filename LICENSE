@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2025 ComfyUI Model Downloader Contributors
+Copyright (c) 2025-2026 ComfyUI Model Downloader Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,26 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+MIT 许可证
+
+版权所有 (c) 2025-2026 ComfyUI Model Downloader 贡献者
+
+特此向任何获得本软件及其相关文档文件（以下简称"本软件"）副本的人免费授予
+许可，在不收取任何费用的前提下，允许其不受限制地处理本软件，包括但不限
+于使用、复制、修改、合并、发布、分发、再许可和/或销售本软件副本的权利，
+并允许获得本软件副本的人这样做，但须符合以下条件：
+
+上述版权声明和本许可声明应包含在本软件的所有副本或主要部分中。
+
+本软件按"原样"提供，不附带任何形式的明示或暗示保证，包括但不限于对适销
+性、特定用途适用性和非侵权性的保证。在任何情况下，作者或版权持有人均不
+对因本软件或本软件的使用或其他交易而产生或与之相关的任何索赔、损害或其
+他责任负责，无论该责任是基于合同、侵权还是其他法律依据。
+
+---
+
+注：本文件为 MIT 许可证的双语版本。**英文原文为具有法律效力的正式版本；**
+**中文译文仅供参考，如中英文版本之间存在任何差异，以英文版本为准。**

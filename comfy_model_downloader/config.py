@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_CONCURRENCY = 3
 DEFAULT_RETRIES = 3
 DEFAULT_TIMEOUT = 30.0
-USER_AGENT = "comfy-ui-model-downloader/0.1.11 (+https://github.com/comfyanonymous/ComfyUI)"
+USER_AGENT = "comfy-ui-model-downloader/0.1.12 (+https://github.com/comfyanonymous/ComfyUI)"
 
 _CONFIG_FILENAMES = ("comfy-ui-model-downloader.toml", ".comfy-ui-model-downloader.toml")
 
@@ -69,6 +69,24 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+_PERSISTED_KEYS = frozenset({
+    "comfy_root", "models_dir", "concurrency", "retries", "timeout",
+    "deep_verify", "health_check_existing", "allow_basename_match", "curated_path",
+})
+
+
+def _toml_value(v: Any) -> str:
+    """把 Python 值序列化成单行 TOML 字面量字符串。"""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return repr(v)
+    s = str(v).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{s}"'
+
+
 @dataclass(slots=True)
 class Settings:
     """运行时设置。"""
@@ -105,10 +123,14 @@ class Settings:
             section = raw if isinstance(raw, dict) else {}
 
         def pick(key: str, env: str | None = None) -> str | None:
+            if env:
+                env_val = os.environ.get(env)
+                if env_val:
+                    return env_val
             val = section.get(key)
             if isinstance(val, str) and val:
                 return val
-            return os.environ.get(env) if env else None
+            return None
 
         root = comfy_root or pick("comfy_root", "COMFY_ROOT")
         models = models_dir or pick("models_dir", "COMFY_MODELS_DIR")
@@ -158,18 +180,35 @@ class Settings:
         }
 
     def save(self, path: Path | None = None) -> Path:
-        """把 comfy_root / models_dir 写入用户级配置。token 永远不落盘。"""
+        """原子写入用户配置：保留未在本类的 key（含 token 等敏感字段），用临时文件 + rename 保证不写坏。"""
         target = path or user_config_path()
-        lines = [
-            "# comfy-ui-model-downloader 配置，由应用自动写入，也可手动编辑。",
-            "",
-        ]
+        try:
+            existing = tomllib.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+        except (OSError, tomllib.TOMLDecodeError):
+            existing = {}
+        merged = {k: v for k, v in existing.items() if k not in _PERSISTED_KEYS}
         if self.comfy_root is not None:
-            lines.append(f'comfy_root = "{self.comfy_root.as_posix()}"')
+            merged["comfy_root"] = str(self.comfy_root.as_posix())
         if self.models_dir is not None:
-            lines.append(f'models_dir = "{self.models_dir.as_posix()}"')
-        lines += ["", f"concurrency = {int(self.concurrency)}"]
+            merged["models_dir"] = str(self.models_dir.as_posix())
+        merged["concurrency"] = int(self.concurrency)
+        merged["retries"] = int(self.retries)
+        merged["timeout"] = float(self.timeout)
+        merged["deep_verify"] = bool(self.deep_verify)
+        merged["health_check_existing"] = bool(self.health_check_existing)
+        merged["allow_basename_match"] = bool(self.allow_basename_match)
+        if self.curated_path:
+            merged["curated_path"] = str(self.curated_path)
+        lines = ["# comfy-ui-model-downloader 配置，由应用自动写入，也可手动编辑。", ""]
+        for k, v in merged.items():
+            lines.append(f"{k} = {_toml_value(v)}")
+        body = "\n".join(lines) + "\n"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
         self.config_file = target
         return target

@@ -1,6 +1,6 @@
 [project]
 name = "comfy-ui-model-downloader"
-version = "0.1.11"
+version = "0.1.12"
 description = "ComfyUI Model Downloader —— 解析 ComfyUI 工作流所需模型，从 ModelScope 魔搭社区下载到本地模型目录并校验完整性"
 requires-python = ">=3.10"
 dependencies = [

@@ -31,14 +31,13 @@ def _alert(title: str, message: str) -> None:
         return
     import subprocess
 
-    def esc(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"')
+    from comfy_model_downloader.launcher import _as_applescript
 
     subprocess.run(
         [
             "osascript",
             "-e",
-            f'display alert "{esc(title)}" message "{esc(message)}" as critical',
+            f'display alert {_as_applescript(title)} message {_as_applescript(message)} as critical',
         ],
         stdin=subprocess.DEVNULL,
         capture_output=True,

@@ -17,6 +17,7 @@ from __future__ import annotations
 import posixpath
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # 类别定义
@@ -317,3 +318,18 @@ def sanitize_subpath(filename: str) -> str:
     if not parts:
         raise ValueError(f"非法模型文件名: {filename!r}")
     return "/".join(parts)
+
+
+def safe_join(models_root: Path, filename: str) -> Path:
+    """在 models_root 下构造安全子路径，拒绝对 symlink 链的越界写入。
+
+    先用 :func:`sanitize_subpath` 把 filename 清洗成相对子路径，
+    再解析为绝对路径并断言结果仍在 models_root 解析后的边界内——
+    即便用户在 models_root 下放了恶意 symlink，写入也不会落到外部目录。
+    """
+    clean = sanitize_subpath(filename)
+    resolved_root = models_root.resolve()
+    target = (resolved_root / clean).resolve()
+    if not target.is_relative_to(resolved_root):
+        raise ValueError(f"路径逃逸 models_root: {filename!r} -> {target}")
+    return target

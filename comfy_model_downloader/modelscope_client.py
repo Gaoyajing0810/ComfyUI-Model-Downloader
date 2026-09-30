@@ -11,13 +11,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 import httpx
+
+_LOG = logging.getLogger(__name__)
 
 from .plan import Candidate, ResolvedSource
 from .resolver import RemoteFile, normalize
@@ -26,7 +30,7 @@ DEFAULT_ENDPOINT = "https://modelscope.cn"
 LEGACY_PREFIX = "/api/v1"
 DOLPHIN_SEARCH = f"{LEGACY_PREFIX}/dolphin/models"
 CHUNK = 1 << 20
-USER_AGENT = "comfy-ui-model-downloader/0.1.11 (ModelScope client)"
+USER_AGENT = "comfy-ui-model-downloader/0.1.12 (ModelScope client)"
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 
 
@@ -87,6 +91,7 @@ class ModelScopeIndex:
         self._transport = transport
         self._api: Any = None
         self._file_cache: dict[str, tuple[RemoteFile, ...]] = {}
+        self._last_error: Exception | None = None
 
     @property
     def token_set(self) -> bool:
@@ -134,7 +139,9 @@ class ModelScopeIndex:
                 )
                 resp.raise_for_status()
                 body = resp.json()
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as exc:
+            _LOG.warning("dolphin search failed: %s", exc)
+            self._last_error = exc
             return []
 
         data = body.get("Data") or {}
@@ -168,7 +175,9 @@ class ModelScopeIndex:
             page = self._hub_api().list_repos(
                 "model", search=query, page_number=1, page_size=limit
             )
-        except Exception:  # noqa: BLE001 - 任何 SDK 异常都退化为"无结果"
+        except Exception as exc:  # noqa: BLE001 - 任何 SDK 异常都退化为"无结果"
+            _LOG.warning("openapi search failed: %s", exc)
+            self._last_error = exc
             return []
         items = getattr(page, "items", None) or (page or {}).get("models") or []
         out: list[_RepoHit] = []
@@ -276,6 +285,11 @@ class ModelScopeFetcher:
 
         if written is None:
             raise asyncio.CancelledError()
+        if source.size is not None and written == 0 and part.exists() and part.stat().st_size != source.size:
+            part.unlink(missing_ok=True)
+            raise ModelScopeError(
+                f"下载异常：本地 part {part.stat().st_size}B 与期望 {source.size}B 不一致"
+            )
         if written and part.exists():
             part.replace(dest)
         return {"path": str(dest), "size": dest.stat().st_size if dest.exists() else written,
@@ -327,7 +341,10 @@ class ModelScopeFetcher:
             if resp.status_code == 416:
                 return offset
             if resp.status_code >= 400:
-                raise ModelScopeError(f"下载失败 HTTP {resp.status_code}: {url}")
+                _safe = urlsplit(url)
+                raise ModelScopeError(
+                    f"下载失败 HTTP {resp.status_code}（{_safe.netloc}{_safe.path}）"
+                )
             append = resp.status_code == 206
             if not append:
                 offset = 0
@@ -384,6 +401,15 @@ class DirectURLFetcher:
         ("huggingface.co", "hf-mirror.com"),
     )
 
+    _DEFAULT_HOSTS: frozenset[str] = frozenset({
+        "huggingface.co",
+        "hf-mirror.com",
+        "civitai.com",
+        "github.com",
+        "objects.githubusercontent.com",
+        "example.com",
+    })
+
     def __init__(
         self,
         token: str | None = None,
@@ -392,6 +418,7 @@ class DirectURLFetcher:
         connect: float = 30.0,
         auth_header: str = "Authorization",
         transport: httpx.AsyncBaseTransport | None = None,
+        allowed_hosts: Iterable[str] | None = None,
     ) -> None:
         self._token = token or os.environ.get("DIRECT_URL_TOKEN") or os.environ.get("HF_TOKEN") or os.environ.get("CIVITAI_TOKEN")
         self._timeout = timeout
@@ -400,6 +427,14 @@ class DirectURLFetcher:
         self._auth_header = auth_header
         self._transport = transport
         self._enable_hf_mirror = os.environ.get("COMFY_FETCH_NO_HF_MIRROR") != "1"
+
+        allowed: set[str] = set(self._DEFAULT_HOSTS)
+        env_extra = os.environ.get("DIRECT_URL_ALLOWED_HOSTS", "")
+        if env_extra:
+            allowed.update(h.strip().lower() for h in env_extra.split(",") if h.strip())
+        if allowed_hosts is not None:
+            allowed.update(h.lower() for h in allowed_hosts if h)
+        self._allowed_hosts: frozenset[str] = frozenset(allowed)
 
     @classmethod
     def rewrite_hf_url(cls, url: str, *, enabled: bool = True) -> str:
@@ -425,13 +460,15 @@ class DirectURLFetcher:
         if not source.url:
             raise ModelScopeError("直连来源缺少 url 字段")
         url = self.rewrite_hf_url(source.url, enabled=self._enable_hf_mirror)
-        if not (url.startswith("https://") or url.startswith("http://")):
-            raise ModelScopeError(f"直连 URL 必须以 http(s) 开头: {url}")
+        if not url.startswith("https://"):
+            raise ModelScopeError(f"直连 URL 必须以 https 开头: {url}")
+        host = (urlsplit(url).hostname or "").lower()
+        token_allowed = bool(self._token) and host in self._allowed_hosts
         part = dest.with_name(dest.name + ".part")
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         headers: dict[str, str] = {"User-Agent": USER_AGENT}
-        if self._token:
+        if token_allowed:
             headers[self._auth_header] = f"Bearer {self._token}"
 
         async with httpx.AsyncClient(
@@ -445,9 +482,16 @@ class DirectURLFetcher:
 
             async with client.stream("GET", url, headers=headers) as resp:
                 if resp.status_code == 416:
+                    if source.size is not None and offset != source.size:
+                        raise ModelScopeError(
+                            f"直连断点续传失败：本地 part {offset}B 与期望 {source.size}B 不一致"
+                        )
                     written = offset
                 elif resp.status_code >= 400:
-                    raise ModelScopeError(f"直连下载失败 HTTP {resp.status_code}: {url}")
+                    _safe = urlsplit(url)
+                    raise ModelScopeError(
+                        f"直连下载失败 HTTP {resp.status_code}（{_safe.netloc}{_safe.path}）"
+                    )
                 else:
                     append = resp.status_code == 206
                     if not append:
@@ -460,7 +504,7 @@ class DirectURLFetcher:
                             on_progress(written, total)
                         async for chunk in resp.aiter_bytes(self._chunk):
                             if should_cancel and should_cancel():
-                                return None
+                                raise asyncio.CancelledError()
                             fh.write(chunk)
                             written += len(chunk)
                             if on_progress:

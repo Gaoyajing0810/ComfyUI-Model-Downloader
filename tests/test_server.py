@@ -38,7 +38,10 @@ def comfy_root(tmp_path: Path) -> Path:
 def client(comfy_root: Path) -> TestClient:
     settings = Settings(comfy_root=comfy_root, deep_verify=True)
     server_mod._PLANS.clear()
-    return TestClient(create_app(settings))
+    server_mod._heartbeat_ts = 0.0
+    app = create_app(settings)
+    server_mod.touch_heartbeat()
+    return TestClient(app)
 
 
 def _upload(client: TestClient, resolve: str = "false"):

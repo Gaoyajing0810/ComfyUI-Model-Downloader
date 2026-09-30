@@ -7,18 +7,21 @@ JSON 契约见 README / web/app.js。本文件只做编排：解析与查重在 
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from . import __version__
+from .cleanup import _AGE_SECONDS_DEFAULT, cleanup_stale_parts
 from .config import Settings
 from .downloader import DownloadManager
 from .launcher import choose_folder, looks_like_comfyui
@@ -31,6 +34,7 @@ from .scan import ComfyRoot, LocalIndex, iter_model_files
 from .verify import VerifyStatus, verify_file
 
 WEB_DIR = Path(__file__).parent / "web"
+_PLAN_MAX_BYTES: int = 50 * 1024 * 1024  # /api/plan 上传上限：典型 workflow <1MB；50MB 给异常大文件留余量
 _PLANS: dict[str, Plan] = {}
 _RUNNING: set[asyncio.Task[None]] = set()
 
@@ -56,6 +60,10 @@ _shutdown_requested_at: float = 0.0
 
 #: 主动退出倒计时窗口（秒）。期间新心跳能撤销关闭请求，覆盖刷新页面场景。
 _shutdown_grace_seconds: float = 5.0
+
+#: /api/shutdown 的双因子：仅允许 loopback 调用 + 必须近期有心跳（秒）。
+_shutdown_auth_window_seconds: float = 30.0
+_shutdown_allowed_hosts: frozenset[str] = frozenset({"127.0.0.1", "::1", "testclient"})
 
 
 def request_shutdown() -> None:
@@ -173,19 +181,67 @@ def _probe(root: Path, models: Path) -> dict[str, Any]:
     }
 
 
+_DETECT_SEED_MAX_ITEMS: int = 30
+_DETECT_TIMEOUT_SECONDS: float = 2.5
+_DETECT_MAX_RESULTS: int = 20
+
+
+def _scan_one_seed(seed: Path) -> list[str]:
+    out: list[str] = []
+    try:
+        is_seed_dir = seed.is_dir()
+    except OSError:
+        return out
+    if not is_seed_dir:
+        return out
+    if seed.name.lower().startswith("comfy"):
+        candidates: list[Path] = [seed]
+    else:
+        try:
+            candidates = list(seed.iterdir())
+        except OSError:
+            return out
+        if len(candidates) > _DETECT_SEED_MAX_ITEMS:
+            candidates = candidates[:_DETECT_SEED_MAX_ITEMS]
+    for c in candidates:
+        if c.name.startswith("."):
+            continue
+        try:
+            if not c.is_dir():
+                continue
+            has_models = (c / "models").is_dir()
+            has_comfy = (c / "comfy").is_dir()
+        except OSError:
+            continue
+        if has_models and has_comfy:
+            out.append(str(c))
+    return out
+
+
 def _detect_candidates() -> list[str]:
     home = Path.home()
-    seen: list[str] = []
     seeds = [home / n for n in ("ComfyUI", "comfyui", "comfy", "Documents", "Desktop", "Downloads")]
-    for seed in seeds:
-        if not seed.is_dir():
-            continue
-        for candidate in ([seed] if seed.name.lower().startswith("comfy") else seed.iterdir()):
-            if not candidate.is_dir() or candidate.name.startswith("."):
-                continue
-            if (candidate / "models").is_dir() and (candidate / "comfy").is_dir():
-                seen.append(str(candidate))
-    return seen[:20]
+    seen: list[Path] = []
+    seen_set: set[Path] = set()
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="detect-candidates") as ex:
+        futures = {ex.submit(_scan_one_seed, s): s for s in seeds}
+        try:
+            for fut in as_completed(futures, timeout=_DETECT_TIMEOUT_SECONDS):
+                try:
+                    result = fut.result()
+                except Exception:
+                    continue
+                for p in result:
+                    pp = Path(p)
+                    if pp in seen_set:
+                        continue
+                    seen_set.add(pp)
+                    seen.append(pp)
+                    if len(seen) >= _DETECT_MAX_RESULTS:
+                        return [str(x) for x in seen[:_DETECT_MAX_RESULTS]]
+        except TimeoutError:
+            pass
+    return [str(p) for p in seen[:_DETECT_MAX_RESULTS]]
 
 
 async def _build_plan_async(
@@ -221,6 +277,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     st = settings or _settings()
     manager = DownloadManager(st)
     fetcher = build_route_fetcher(token=st.token, timeout=st.timeout)
+
+    @app.middleware("http")
+    async def _limit_body(request, call_next):
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _PLAN_MAX_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"请求体超过 {_PLAN_MAX_BYTES // (1024 * 1024)}MB 上限"},
+            )
+        return await call_next(request)
+
+    if st.models_dir:
+        try:
+            removed = cleanup_stale_parts(Path(st.models_dir), max_age_seconds=_AGE_SECONDS_DEFAULT)
+            if removed:
+                import logging
+                logging.getLogger(__name__).info("启动清理 %d 个陈旧 .part 残骸", removed)
+        except Exception:  # noqa: BLE001
+            pass
 
     @app.get("/api/config")
     async def get_config() -> dict[str, Any]:
@@ -267,6 +342,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raw = await file.read()
         if not raw:
             raise HTTPException(400, "上传的文件为空")
+        if len(raw) > _PLAN_MAX_BYTES:
+            raise HTTPException(
+                413,
+                f"上传内容超过 {_PLAN_MAX_BYTES // (1024 * 1024)}MB 上限",
+            )
         job_id = f"j_{int(time.time() * 1000) & 0xFFFFFF:06x}"
         name = Path(file.filename or "workflow.json").name
         plan = await _build_plan_async(st, raw, name, job_id, resolve, health_check)
@@ -340,7 +420,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task = manager.create(plan, body.item_ids)
         runner = asyncio.create_task(manager.run(task, plan, fetcher))
         _RUNNING.add(runner)
-        runner.add_done_callback(_RUNNING.discard)
+
+        def _on_runner_done(t: asyncio.Task) -> None:
+            _RUNNING.discard(t)
+            exc = t.exception()
+            if exc is not None:
+                logging.getLogger(__name__).exception(
+                    "download runner task %s crashed", task.task_id, exc_info=exc
+                )
+                if task.state == "running":
+                    task.state = "failed"
+                    task.log(f"runner task 异常: {type(exc).__name__}: {exc}")
+
+        runner.add_done_callback(_on_runner_done)
         return {"task_id": task.task_id}
 
     @app.get("/api/progress/{task_id}")
@@ -417,7 +509,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pass
 
     @app.post("/api/shutdown")
-    async def post_shutdown() -> dict[str, bool]:
+    async def post_shutdown(request: Request) -> dict[str, bool]:
+        client_host = (request.client.host if request.client else "")
+        if client_host not in _shutdown_allowed_hosts:
+            raise HTTPException(403, f"shutdown 仅允许 loopback 调用（当前 {client_host!r}）")
+        if time.monotonic() - _heartbeat_ts > _shutdown_auth_window_seconds:
+            raise HTTPException(403, "shutdown 拒绝：近 30s 内未收到心跳")
         request_shutdown()
         return {"ok": True}
 

@@ -208,7 +208,8 @@ def fetch(workflow: str, comfy_root: str | None, models_dir: str | None,
     if concurrency:
         settings.concurrency = concurrency
     root, _, plan = _build_plan(settings, workflow, comfy_root, models_dir)
-    _print_plan(plan)
+    if not as_json:
+        _print_plan(plan)
 
     todo = plan.downloadable
     if not todo:
@@ -226,8 +227,7 @@ def fetch(workflow: str, comfy_root: str | None, models_dir: str | None,
     manager = DownloadManager(settings)
     task = manager.create(plan, [i.item_id for i in todo])
     fetcher = ModelScopeFetcher(
-        token=settings.token, retries=settings.retries, timeout=settings.timeout,
-        deep_verify=settings.deep_verify,
+        token=settings.token, timeout=settings.timeout,
     )
     try:
         asyncio.run(manager.run(task, plan, fetcher))
@@ -308,7 +308,8 @@ def _print_task_result(result: dict[str, Any]) -> None:
     for it in result["items"]:
         if it["state"] in {"done", "failed", "skipped", "unresolved"}:
             c = {"done": "green", "skipped": "bright_black", "failed": "red", "unresolved": "magenta"}[it["state"]]
-            click.secho(f"  [{it['state']:<10}] {it['filename']:<44} {it.get('dest') or it.get('error') or ''}", fg=c)
+            msg = it.get("error") or it.get("dest") or ""
+            click.secho(f"  [{it['state']:<10}] {it['filename']:<44} {msg}", fg=c)
     click.echo(f"\n模型目录：{result['models_dir']}")
 
 

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -18,6 +19,8 @@ import webbrowser
 from pathlib import Path
 
 from .config import Settings, user_config_path
+
+_OSA_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 APP_NAME = "ComfyUI Model Downloader"
 DEFAULT_PORT = 8799
@@ -73,6 +76,10 @@ def choose_folder(title: str, message: str) -> Path | None:
 
 
 def _as_applescript(text: str) -> str:
+    if not isinstance(text, str):
+        raise TypeError(f"osascript literal 必须是 str, 收到 {type(text).__name__}")
+    if _OSA_CONTROL_RE.search(text):
+        raise ValueError(f"osascript literal 含 ASCII 控制字符: {text!r}")
     escaped = text.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 

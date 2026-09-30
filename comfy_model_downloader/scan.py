@@ -18,6 +18,9 @@ from .verify import SafetensorsProbe, probe_safetensors
 #: 判定 ComfyUI 根目录的标志文件
 _ROOT_MARKERS = ("folder_paths.py", "main.py", "execution.py", "models")
 
+_MAX_WALK_DEPTH: int = 12
+_MAX_WALK_FILES: int = 50_000
+
 
 @dataclass(slots=True)
 class ComfyRoot:
@@ -98,7 +101,6 @@ class LocalIndex:
     models_dir: Path
     _by_category: dict[str, dict[str, LocalFile]] = field(default_factory=dict)
     _base_by_category: dict[str, dict[str, list[LocalFile]]] = field(default_factory=dict)
-    _checked: set[Path] = field(default_factory=set)
 
     @classmethod
     def build(
@@ -165,17 +167,6 @@ class LocalIndex:
             if files
         }
 
-    def check_health(self, rel_path: str) -> LocalFile | None:
-        """按相对路径做文件头体检（返回更新后的 LocalFile）。"""
-        for cat_files in self._by_category.values():
-            lf = cat_files.get(rel_path.lower())
-            if lf is not None and lf.path not in self._checked:
-                probe = probe_safetensors(lf.path)
-                object.__setattr__(lf, "healthy", probe.ok) if hasattr(lf, "__setattr__") else None
-                self._checked.add(lf.path)
-                return lf
-        return None
-
 
 @dataclass(frozen=True, slots=True)
 class _WalkedFile:
@@ -187,7 +178,13 @@ class _WalkedFile:
 
 def _walk_model_files(base: Path, category: str, health_check: bool) -> Iterator[_WalkedFile]:
     allowed = extensions_for(category)
+    file_count = 0
+    base_parts = len(base.parts)
     for dirpath, dirnames, filenames in os.walk(base):
+        depth = len(Path(dirpath).parts) - base_parts
+        if depth >= _MAX_WALK_DEPTH:
+            dirnames[:] = []
+            continue
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in filenames:
             if name.startswith(".") or name.endswith((".part", ".tmp", ".download")):
@@ -204,6 +201,11 @@ def _walk_model_files(base: Path, category: str, health_check: bool) -> Iterator
             if health_check and ext == ".safetensors":
                 healthy = probe_safetensors(p).ok
             yield _WalkedFile(name, p, size, healthy)
+            file_count += 1
+            if file_count >= _MAX_WALK_FILES:
+                raise ValueError(
+                    f"{base} 文件数超过 {_MAX_WALK_FILES} 上限（depth 限制 {_MAX_WALK_DEPTH}）"
+                )
 
 
 def iter_model_files(root: ComfyRoot, category: str, health_check: bool = False) -> Iterator[Path]:

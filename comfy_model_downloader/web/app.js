@@ -30,6 +30,8 @@ const ICON_PATHS = {
   clock: '<circle cx="8" cy="8" r="6.1"/><path d="M8 4.6V8l2.4 1.5"/>',
   shield: '<path d="M8 1.8 13.2 3.7v4.1c0 3-2.2 5.4-5.2 6.5-3-1.1-5.2-3.5-5.2-6.5V3.7z"/><path d="M5.9 7.9 7.4 9.4l2.9-2.9"/>',
   search: '<circle cx="7.2" cy="7.2" r="5.2"/><path d="M11 11l3.2 3.2"/>',
+  'search-off': '<circle cx="7.2" cy="7.2" r="5.2"/><path d="M11 11l3.2 3.2"/><path d="M3.4 3.4l9 9"/>',
+  inbox: '<path d="M2 4.2h12v8H2z"/><path d="M2 8.2l3.2 2.8h5.6l3.2-2.8"/>',
   stop: '<rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1"/>',
   copy: '<path d="M5.6 5.6V2.8h7.6v7.6H9.4"/><path d="M2.8 5.6h7.6v7.6H2.8z"/>',
   info: '<circle cx="8" cy="8" r="6.1"/><path d="M8 7.2v4"/><path d="M8 4.9v.5"/>',
@@ -255,10 +257,13 @@ const kv = (k, v) =>
    4. 提示 / 播报
    ========================================================================= */
 let toastSeq = 0;
+const _TOAST_MAX = 3;
+const _TOAST_TIMERS = new Map();
 
 function toast(text, tone = 'ac', ms = 4600) {
   const box = $('#toasts');
   if (!box) return;
+  while (box.children.length >= _TOAST_MAX) box.removeChild(box.firstElementChild);
   const id = ++toastSeq;
   const node = document.createElement('div');
   node.className = 'toast';
@@ -267,9 +272,13 @@ function toast(text, tone = 'ac', ms = 4600) {
   node.innerHTML = `<span class="toast__t">${esc(text)}</span>` +
     `<button type="button" class="btn btn--ghost btn--icon btn--sm toast__x" aria-label="关闭">${icon('x')}</button>`;
   box.appendChild(node);
-  const kill = () => { if (node.parentNode) node.parentNode.removeChild(node); };
+  const kill = () => {
+    clearTimeout(_TOAST_TIMERS.get(id));
+    _TOAST_TIMERS.delete(id);
+    if (node.parentNode) node.parentNode.removeChild(node);
+  };
   node.querySelector('.toast__x').addEventListener('click', kill);
-  setTimeout(kill, ms);
+  _TOAST_TIMERS.set(id, setTimeout(kill, ms));
 }
 
 /** 只在语义状态变化时播报，避免轮询把读屏刷屏。 */
@@ -311,7 +320,7 @@ const MOCK_CONFIG = {
   models_dir: '/Users/gaoyajing/Downloads/ComfyUI/models',
   modelscope_token_set: false,
   concurrency: 3,
-  version: '0.1.11',
+  version: '0.1.12',
   categories: [
     'checkpoints', 'loras', 'vae', 'text_encoders', 'diffusion_models', 'clip_vision',
     'controlnet', 'style_models', 'embeddings', 'upscale_models', 'photomaker', 'gligen',
@@ -789,6 +798,7 @@ async function request(url, opts) {
   if (text) {
     try { data = JSON.parse(text); } catch (e) { data = null; }
   }
+  if (!data) throw new ApiError(res.status, '服务端返回非 JSON 响应');
   if (!res.ok) {
     const detail = data && typeof data.detail === 'string' && data.detail
       ? data.detail
@@ -898,7 +908,9 @@ const api = {
       if (t) t.state = 'cancelled';
       return Promise.resolve();
     }
-    return Promise.resolve();
+    return request('./api/task/' + encodeURIComponent(taskId) + '/cancel', {
+      method: 'POST', signal: signal,
+    });
   },
 };
 
@@ -1155,16 +1167,27 @@ function initDrop() {
   ['dragleave', 'drop'].forEach((ev) =>
     zone.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'dragleave' && zone.contains(e.relatedTarget)) return; zone.classList.remove('is-over'); })
   );
+  function _validateJsonFile(f) {
+    if (!f) return '未选择文件';
+    if (!/\.json$/i.test(f.name)) return '请上传 .json 后缀的 ComfyUI 工作流文件';
+    if (f.size > 50 * 1024 * 1024) return '文件超过 50MB 上限';
+    return null;
+  }
+
   zone.addEventListener('drop', (e) => {
     const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!f) return;
-    setMsg('#dropFile', f.name);
+    const err = _validateJsonFile(f);
+    if (err) { setMsg('#dropFile', err, 'bad'); return; }
+    setMsg('#dropFile', f.name, 'ok');
     submitWorkflow(f);
   });
   input.addEventListener('change', () => {
     const f = input.files && input.files[0];
     if (!f) return;
-    setMsg('#dropFile', f.name);
+    const err = _validateJsonFile(f);
+    if (err) { setMsg('#dropFile', err, 'bad'); input.value = ''; return; }
+    setMsg('#dropFile', f.name, 'ok');
     submitWorkflow(f);
     input.value = '';
   });
@@ -1233,7 +1256,7 @@ function renderPlan() {
 
   const fmtMap = { ui: '工作流界面格式', api: 'API 格式' };
   const meta = [
-    (fmtMap[parse.format] || parse.format || '未知格式'),
+    (fmtMap[parse.format] || esc(parse.format) || '未知格式'),
     '任务 <b>' + esc(p.job_id || '—') + '</b>',
     '节点 <b>' + (num(parse.nodes_scanned) || 0) + '</b>',
     '子图 <b>' + (num(parse.subgraphs) || 0) + '</b>',
@@ -1241,7 +1264,7 @@ function renderPlan() {
     '未识别 <b>' + (num(parse.models_unresolved) || 0) + '</b>',
   ];
   const cats = p.by_category || (parse && parse.by_category) || {};
-  const catChips = Object.keys(cats).map((k) => `<span class="tag">${esc(catLabel(k))} <b class="mono" style="font-weight:500">${cats[k]}</b></span>`);
+  const catChips = Object.keys(cats).map((k) => `<span class="tag">${esc(catLabel(k))} <b class="mono" style="font-weight:500">${esc(cats[k])}</b></span>`);
   $('#planMeta').innerHTML = meta.map((m) => `<span>${m}</span>`).join('<span class="fmeta__dot">·</span>') +
     (catChips.length ? '<span class="fmeta__dot">·</span>' + catChips.join('') : '');
 
@@ -1379,7 +1402,7 @@ function planRowHtml(it) {
     : `<span class="sizenum">${esc(fmtBytes(itemSize(it)))}</span><span class="sizesub">${esc(catLabel(it.category))}</span>`;
 
   return (
-    `<div class="row${unresolved ? ' row--unresolved' : ''}" data-id="${it.id}" data-sel="${checked ? 1 : 0}">` +
+    `<div class="row${unresolved ? ' row--unresolved' : ''}" data-id="${esc(it.id)}" data-sel="${checked ? 1 : 0}">` +
       `<div class="row__main">` +
         `<span class="cell cell-select">` +
           `<label class="chk"><input type="checkbox" data-act="sel"${checked ? ' checked' : ''}${can ? '' : ' disabled'}>` +
@@ -1605,10 +1628,17 @@ function initPlan() {
 
 async function startDownload() {
   if (!S.plan) return;
+  const btn = $('#btnStart');
+  if (btn.disabled) return;
+  if (S.taskId && S.progress && S.progress.state === 'running') {
+    toast('已有任务在运行：' + S.taskId, 'warn');
+    return;
+  }
   const ids = Array.from(S.sel).filter((id) =>
     S.plan.items.some((it) => it.id === id && isDownloadable(it))
   );
   if (!ids.length) { toast('请至少勾选一个待下载的模型。', 'warn'); return; }
+  btn.disabled = true;
   try {
     const r = await api.download({ job_id: S.plan.job_id, item_ids: ids });
     S.taskId = (r && r.task_id) || null;
@@ -1624,6 +1654,8 @@ async function startDownload() {
     startPoll(S.taskId);
   } catch (e) {
     toast(e.message || '启动下载失败', 'bad', 7000);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1633,11 +1665,13 @@ async function startDownload() {
 let pollOn = false;
 let pollCtl = null;
 let pollTimer = null;
+let pollFailCount = 0;
 
 function stopPoll() {
   pollOn = false;
   if (pollCtl) { try { pollCtl.abort(); } catch (e) { /* 已中断 */ } pollCtl = null; }
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  pollFailCount = 0;
 }
 
 async function startPoll(taskId) {
@@ -1646,21 +1680,31 @@ async function startPoll(taskId) {
   pollOn = true;
   const ctl = new AbortController();
   pollCtl = ctl;
-
   while (pollOn) {
     let snap;
     try {
       snap = await api.progress(taskId, ctl.signal);
+      pollFailCount = 0;
     } catch (e) {
       if (!pollOn || (e && e.name === 'AbortError')) return;
-      stopPoll();
-      toast(e.message || '无法获取进度', 'bad', 7000);
-      say('进度获取失败：' + (e.message || '未知错误'));
-      return;
+      pollFailCount++;
+      if (pollFailCount >= 5) {
+        stopPoll();
+        toast('进度连接失败已停止：' + (e.message || '未知错误'), 'bad', 9000);
+        say('进度连接失败 5 次，已停止轮询');
+        return;
+      }
+      const delay = Math.min(8000, 500 * Math.pow(2, pollFailCount - 1));
+      await new Promise((r) => { pollTimer = setTimeout(r, delay); });
+      pollTimer = null;
+      continue;
     }
     if (!pollOn) return;
     applyProgress(snap);
     if (snap.state !== 'running') break;
+    await new Promise((r) => { pollTimer = setTimeout(r, 1000); });
+    pollTimer = null;
+  }
     await sleep(POLL_MS);
   }
   stopPoll();
@@ -1753,7 +1797,7 @@ function renderDlRows(snap) {
     const cls = meta.class_type || it.class_type || '—';
 
     return (
-      `<div class="row${it.state === 'failed' ? ' row--failed' : ''}" data-id="${it.id}">` +
+      `<div class="row${it.state === 'failed' ? ' row--failed' : ''}" data-id="${esc(it.id)}">` +
         `<div class="row__main">` +
           `<span class="cell cell-state">${chipSpec(m, 'chip--mini')}</span>` +
           `<span class="cell cell-file">` +
@@ -1894,11 +1938,15 @@ async function loadHistory() {
   try {
     const r = await api.history();
     S.history = Array.isArray(r && r.tasks) ? r.tasks : [];
+    renderHistory();
   } catch (e) {
-    S.history = [];
     toast(e.message || '无法读取历史记录', 'bad');
+    setMsg('#historyMsg', '刷新失败：' + (e.message || '未知错误'), 'bad');
+    if (!S.history.length) {
+      S.history = [];
+      renderHistory();
+    }
   }
-  renderHistory();
 }
 
 function renderHistory() {
@@ -2077,7 +2125,7 @@ function renderProbe(p) {
   if (!p) { box.innerHTML = ''; return; }
   const notes = (p.notes || []).map((n) => '<span class="probe__notes">' + esc(n) + '</span>').join('');
   box.innerHTML =
-    '<span><span class="probe__k">本地模型文件 </span><span class="probe__v">' + (p.model_file_count || 0) + ' 个</span></span>' +
+    '<span><span class="probe__k">本地模型文件 </span><span class="probe__v">' + esc(num(p.model_file_count) || 0) + ' 个</span></span>' +
     '<span><span class="probe__k">目录结构 </span><span class="probe__v">' + (p.looks_like_comfyui ? '像 ComfyUI' : '未见 main.py / comfy/') + '</span></span>' +
     notes;
 }
@@ -2230,10 +2278,13 @@ function startHeartbeat() {
     _hbWs = null;
     clearInterval(_hbTimer);
     _hbTimer = null;
-    // 断线自动重连（3s），但手动停止/页面正在卸载时不重连
+    if (_hbRetry) clearTimeout(_hbRetry);
     if (!_hbStop && document.readyState !== 'unloading') {
-      _hbRetry = setTimeout(startHeartbeat, 3000);
+      const delay = Math.min(30000, 1000 * Math.pow(2, _hbFailCount || 0));
+      _hbFailCount = (_hbFailCount || 0) + 1;
+      _hbRetry = setTimeout(startHeartbeat, delay);
     }
+  };
   };
   ws.onerror = () => { /* 静默，由 onclose 接管重连 */ };
 }

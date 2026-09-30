@@ -205,8 +205,8 @@ async def test_direct_url_200_overwrites_partial_part(tmp_path: Path) -> None:
 # —— 取消 ——
 
 @pytest.mark.asyncio
-async def test_direct_url_cancel_returns_none_and_keeps_part(tmp_path: Path) -> None:
-    """should_cancel() 为真时 fetch 返回 None，.part 保留供续传。"""
+async def test_direct_url_cancel_raises_and_keeps_part(tmp_path: Path) -> None:
+    """should_cancel() 为真时 fetch 抛 CancelledError，.part 保留供续传，与 ModelScopeFetcher 契约对齐。"""
     body = b"X" * 8192
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -222,9 +222,8 @@ async def test_direct_url_cancel_returns_none_and_keeps_part(tmp_path: Path) -> 
         return cancel_flag["v"]
 
     cancel_flag["v"] = True
-    meta = await fetcher.fetch(src, dest, should_cancel=should_cancel)
-    # 当前实现：取消时返回 None（而非抛 CancelledError），与 ModelScopeFetcher 对齐
-    assert meta is None
+    with pytest.raises(asyncio.CancelledError):
+        await fetcher.fetch(src, dest, should_cancel=should_cancel)
     assert (dest.with_name(dest.name + ".part")).exists()
     assert not dest.exists()
 

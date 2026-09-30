@@ -10,7 +10,7 @@ try:
 except PackageNotFoundError:
     # 兜底：源码树直跑 / frozen 打包未收集 .dist-info 等极端场景。
     # 由 scripts/bump_version.py 与 pyproject 同步维护。
-    __version__ = "0.1.11"
+    __version__ = "0.1.12"
 from .mapping import CATEGORY_DIRS, primary_dir
 from .parser import ModelRef, ParseResult, load_workflow, parse_workflow
 from .plan import Plan, PlanItem, ResolvedSource, SourceKind, build_plan

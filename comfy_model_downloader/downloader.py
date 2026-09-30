@@ -14,7 +14,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 
+from .cleanup import _AGE_SECONDS_AFTER_DOWNLOAD, cleanup_stale_parts
 from .config import Settings
+from .mapping import safe_join
 from .plan import Plan, PlanItem, ResolvedSource, SourceKind
 from .verify import VerifyStatus, human_bytes, verify_file
 
@@ -192,7 +194,13 @@ async def _download_one(
 ) -> None:
     source = item.source
     assert source.kind is not SourceKind.NONE
-    dest = models_root / item.target_rel
+    try:
+        dest = safe_join(models_root, item.target_rel)
+    except ValueError as exc:
+        progress.state = "failed"
+        progress.error = f"路径安全检查未通过：{exc}"
+        task.log(f"路径安全检查未通过：{exc}")
+        return
     progress.dest = str(dest)
     progress.total = source.size or 0
     meter = _SpeedMeter()
@@ -289,6 +297,7 @@ class DownloadManager:
         self._order: list[str] = []
         self._max_history = max_history
         self._sem = asyncio.Semaphore(max(1, settings.concurrency))
+        self._active_parts: set[Path] = set()
 
     def get(self, task_id: str) -> DownloadTask | None:
         return self._tasks.get(task_id)
@@ -370,15 +379,17 @@ class DownloadManager:
                     progress.message = "已取消"
                     raise
 
-        try:
-            await asyncio.gather(*(worker(p) for p in pending))
-        except asyncio.CancelledError:
-            if not task.cancelled:
-                raise
-            task.state = "cancelled"
-            task.finished_at = time.time()
-            task.log("任务已取消")
-            return task
+        results = await asyncio.gather(*(worker(p) for p in pending), return_exceptions=True)
+        for exc in results:
+            if isinstance(exc, asyncio.CancelledError):
+                if not task.cancelled:
+                    raise exc
+                task.state = "cancelled"
+                task.finished_at = time.time()
+                task.log("任务已取消")
+                return task
+            if isinstance(exc, BaseException):
+                task.log(f"worker 异常（不影响其他任务）: {type(exc).__name__}: {exc}")
         states = {i.state for i in task.items}
         if DownloadState.FAILED in states:
             task.state = "failed"
@@ -386,6 +397,14 @@ class DownloadManager:
             task.state = "done"
         task.finished_at = time.time()
         task.log(f"任务结束：{task.state}")
+        removed = await asyncio.to_thread(
+            cleanup_stale_parts,
+            models_root,
+            max_age_seconds=_AGE_SECONDS_AFTER_DOWNLOAD,
+            active_paths=self._active_parts,
+        )
+        if removed:
+            task.log(f"清理 {removed} 个陈旧 .part 残骸")
         return task
 
 

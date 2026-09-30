@@ -6,13 +6,14 @@
 
 **把 ComfyUI 工作流丢进去，自动从魔搭（ModelScope）补齐缺失的模型**
 
-[应用介绍](#这是什么) · [使用手册](docs/使用手册.md) · [命令行](#命令行参考) · [配置](#配置参考)
+[应用介绍](#这是什么) · [使用手册](docs/使用手册.md) · [命令行](#命令行参考) · [配置](#配置参考) · [CHANGELOG](CHANGELOG.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![ModelScope](https://img.shields.io/badge/ModelScope-魔搭社区-FF6A00?style=flat-square)](https://www.modelscope.cn/)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)]()
-[![Tests](https://img.shields.io/badge/tests-pytest-42a5f5?style=flat-square)](https://docs.pytest.org/)
+[![Version](https://img.shields.io/badge/version-0.1.12-5CC8D8?style=flat-square)](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases)
+[![Tests](https://img.shields.io/badge/tests-pytest%20104%20passed-42a5f5?style=flat-square)]()
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 </div>
@@ -43,8 +44,12 @@
 - **零重复下载** — 扫描本地 25 个模型类别，已存在的直接跳过
 - **完整性校验** — 下载后校验大小与哈希，损坏文件不会混进模型目录
 - **自动归类** — 按 `class_type` → 输入名 → 文件名三级规则判定目录，认得 20+ 类模型
-- **断点续传** — 中断后重新执行可继续未完成的文件
+- **断点续传** — 中断后重新执行可继续未完成的文件；URL 412 Range 校验防止截断文件被错误接受
 - **两种用法** — 图形界面（双击 `.app`）或命令行，功能完全一致
+- **.app 自动退出** — 双击启动后台服务，关掉浏览器即自动关闭，无需手动管理
+- **直链补全** — 遇到魔搭无收录的模型，可粘贴 HF/CivitAI 直链下载（host 白名单 + https-only + 凭证作用域保护）
+- **下载可取消** — UI 取消按钮真的调 server 取消，不会假阴性假象
+- **Conventional Commits + SemVer + CHANGELOG 自动化** — 见 [开发流程](#开发流程)
 
 ### 架构
 
@@ -311,36 +316,87 @@ pytest              # 运行测试
 pytest -v tests/test_parser.py
 ```
 
-### Bump 版本号
+### Bump 版本号 + Conventional Commits
 
-修改完代码后想发布新版本号（每次 +0.0.1）：
+本项目遵循 [Conventional Commits 1.0](https://www.conventionalcommits.org/) + [SemVer](https://semver.org/) + [Keep a Changelog 1.1.0](https://keepachangelog.com/) 三套标准。
+
+#### 提交代码（推荐流程）
+
+`scripts/commit.sh` 一站式：校验 conventional 格式 → 自动决定 bump → 同步版本号 → 写 CHANGELOG → git commit。
 
 ```bash
-make bump            # 等价于 python scripts/bump_version.py
+scripts/commit.sh "feat(server): add /api/cancel endpoint"      # → minor
+scripts/commit.sh "fix(downloader): prevent zombie tasks"        # → patch
+scripts/commit.sh "feat!: remove legacy auth"                     # → major
+scripts/commit.sh --no-bump "docs: typo"                          # → 不 bump
+scripts/commit.sh --amend                                        # 复用上次 msg
 ```
 
-脚本会从 `pyproject.toml` 读当前 semver，patch +1，并把新版本号同步到 6 个位置：
-`pyproject.toml`（真相源） / `__init__.py` / `spec` / 前端 `MOCK_CONFIG.version` /
-两处 HTTP `User-Agent`。`tests/test_server.py` 的版本断言用 regex，不绑定具体数字，
-所以 bump 后不需要改测试。
+#### 手动 bump（不带提交）
+
+```bash
+make bump                            # 自动检测（默认 patch）
+python scripts/bump_version.py --major
+python scripts/bump_version.py --minor
+python scripts/bump_version.py --patch --no-changelog    # 跳过 CHANGELOG
+python scripts/bump_version.py --dry-run                 # 只打印
+```
+
+#### Type → Bump 映射
+
+| type | bump | CHANGELOG 段 |
+|---|---|---|
+| `feat!:` / body `BREAKING CHANGE:` | **major** | Removed / ⚠️ BREAKING CHANGES |
+| `feat:` | minor | Added |
+| `fix:` | patch | Fixed |
+| `refactor:` / `perf:` / `build:` | minor | Changed |
+| `docs:` / `chore:` / `test:` / `ci:` / `style:` / `revert:` | 不 bump | — |
+
+`bump_version.py` 从 `git log <last_tag>..HEAD` 解析前缀；找不到 last tag 时扫描全仓库 commits。
+新版本号同步到 6 个位置：`pyproject.toml`（真相源）/ `__init__.py` / `spec` / 前端 `MOCK_CONFIG.version` / 两处 HTTP `User-Agent`。
+`tests/test_server.py` 版本断言用 regex 不绑定具体数字，bump 后无需改测试。
+
+#### CHANGELOG.md
+
+每次 bump 自动在文件顶部插入新版本段（Keep a Changelog 1.1.0 格式），diff 链接指向 GitHub compare。
+完整发布历史：[CHANGELOG.md](CHANGELOG.md)。
+
+### 一键发布
+
+```bash
+make release         # = bump patch + PyInstaller 重打包 .app
+make build           # 仅打包
+```
+
+详见 [v0.1.11](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.11) / [v0.1.12](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.12) Release 页（含 SHA256 校验值）。
 
 ### 项目结构
 
 ```
 comfy_model_downloader/
 ├── cli.py              命令行入口
-├── config.py           配置加载（参数 > 环境变量 > 文件）
-├── launcher.py         图形化启动器
-├── server.py           FastAPI 服务
+├── config.py           配置加载（参数 > 环境变量 > 文件，原子写 TOML）
+├── launcher.py         图形化启动器 + 前台心跳监控
+├── server.py           FastAPI 服务（12 REST + WS /ws/heartbeat）
 ├── parser.py           工作流解析
-├── mapping.py          模型目录映射规则
-├── scan.py             本地模型扫描
+├── mapping.py          模型目录映射规则 + safe_join 防 symlink 越界
+├── scan.py             本地模型扫描（带 depth/files 上限）
 ├── resolver.py         魔搭来源匹配
-├── modelscope_client.py 魔搭 API 客户端
-├── downloader.py       并发下载与断点续传
-├── verify.py           完整性校验
+├── modelscope_client.py 魔搭 API 客户端（含 search fallback + host 白名单 + 416 校验）
+├── downloader.py       并发下载 + 断点续传 + retry
+├── verify.py           完整性校验（size + sha256）
+├── cleanup.py          启动 + 下载后清理陈旧 .part/.tmp/.download
 ├── plan.py             计划构建
-└── web/                前端（原生 HTML/CSS/JS）
+└── web/                前端（原生 HTML/CSS/JS，无构建）
+
+scripts/
+├── bump_version.py     Conventional Commits → 自动 bump + 写 CHANGELOG
+└── commit.sh           提交包装器（conventional 校验 + 自动 bump + commit）
+
+tests/                  104 个 pytest 测试
+docs/使用手册.md          图形界面 5 步走详细说明
+CHANGELOG.md            版本变更日志
+HANDOFF.md              会话交接 + 实施细节
 ```
 
 ---

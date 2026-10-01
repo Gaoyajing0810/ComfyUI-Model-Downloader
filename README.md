@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![ModelScope](https://img.shields.io/badge/ModelScope-魔搭社区-FF6A00?style=flat-square)](https://www.modelscope.cn/)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)]()
-[![Version](https://img.shields.io/badge/version-0.1.12-5CC8D8?style=flat-square)](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases)
+[![Version](https://img.shields.io/badge/version-0.1.13-5CC8D8?style=flat-square)](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases)
 [![Tests](https://img.shields.io/badge/tests-pytest%20104%20passed-42a5f5?style=flat-square)]()
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -368,7 +368,7 @@ make release         # = bump patch + PyInstaller 重打包 .app
 make build           # 仅打包
 ```
 
-详见 [v0.1.11](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.11) / [v0.1.12](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.12) Release 页（含 SHA256 校验值）。
+详见 [v0.1.11](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.11) / [v0.1.12](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.12) / [v0.1.13](https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.13) Release 页（含 SHA256 校验值）。
 
 ### 项目结构
 

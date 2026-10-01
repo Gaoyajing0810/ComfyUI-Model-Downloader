@@ -1,6 +1,6 @@
 # HANDOFF
 
-最后更新：2026-09-30 13:00
+最后更新：2026-10-01 14:20
 
 ## 当前任务与目标
 
@@ -546,3 +546,67 @@ scripts/bump_version.py --dry-run --minor
 ### 待跟进（用户可选）
 - 重发 v0.1.12 GitHub Release 资产：`.app.zip` SHA256 会变（93MB → 新 SHA256）；`RELEASE_NOTES.md` 需追加 E1-E7 修复清单；`create_release.sh` 加 `--tag v0.1.12` 重跑
 - 不主动 commit/push
+---
+
+## 三轮全量代码审计 + v0.1.13 紧急补丁发布（2026-10-01）
+
+用户指令「全方位审计代码」。覆盖后端 13 模块 + 前端 3 文件 + 打包 + 依赖 + 测试，共发现 2 项 CRITICAL（发布阻断）+ 3 项 HIGH。**v0.1.12 及之前的 GitHub Release 资产里前端是坏的**（见下 CRIT-1），本轮修复后已发 v0.1.13。
+
+### 审计基线
+
+| 检查 | 结果 |
+|---|---|
+| `pytest tests/ -q` | 104 passed, 1 warning in 2.7s |
+| `node --check comfy_model_downloader/web/app.js` | **SyntaxError: Unexpected token '}' at 1712**（致命） |
+| `md5 -q src/app.js dist/app.js` | 两边同为 `6f381a36…` → **dist 内的 app.js 同样损坏** |
+
+### 5 项修复
+
+| # | 级别 | 问题 | 文件 | 修复 |
+|---|---|---|---|---|
+| 1 | CRIT | `startPoll()` 闭合后残留孤立 `await sleep(POLL_MS);` + 重复 `stopPoll();` + 多一个 `}` | `web/app.js` | 删残留，保留 `announceFinal();` 与正确函数闭合 |
+| 2 | CRIT | `ws.onclose = () => {...};` 后多一个孤立 `};` | `web/app.js` | 删多余 `};` |
+| 3 | CRIT | `_hbFailCount` 被读写但从未声明（隐式全局，被 `\|\| 0` 掩盖） | `web/app.js` | 加 `let _hbFailCount = 0;`，用法去掉 `\|\| 0` 兜底 |
+| 4 | HIGH | `_monitor_frontend` 残留调试输出污染 launcher.log | `launcher.py` | 删 `_say(f"DEBUG 监控: deadline=…")` 两行 |
+| 5 | HIGH | `_on_runner_done` 把 `CancelledError` 当普通异常 → 用户取消被标 `state="failed"` + 喷 traceback | `server.py` | 先 `isinstance(exc, asyncio.CancelledError)` 分支 → 置 `state="cancelled"` |
+| 6 | HIGH | `_active_parts` 声明了但 `_download_one` 从未注册 `.part` → `cleanup_stale_parts(active_paths=…)` 保护形同虚设 | `downloader.py` | `_download_one` 加 `active_parts` 参数 + `try/finally` 注册/反注册 `dest.with_name(name + ".part")` |
+
+**CRIT 1-3 根因**：上一轮 E7 改 WS 重连 backoff + poll 重试逻辑时的编辑残留。**`node --check` 当时没跑**，PyInstaller 的 `datas` 又不校验 JS 语法，所以一路带进 v0.1.12 的发布资产里。
+
+### 验证
+
+- `pytest --tb=short -q` → **104 passed, 1 warning in 2.7s**（零回归）
+- `node --check`（src + dist 两份）→ ✓ JS syntax OK
+- `md5 -q src/app.js dist/app.js` → 一致
+- 修复版 app.js md5：`ead7c6f3e59b104ef9f02ad4b58d131e`；bump 后（含版本号变化）：`71e9217a4fc897369a80fc5303089fbf`
+
+### 版本 bump 与重打包
+
+- `python scripts/bump_version.py --patch` → 0.1.12 → **0.1.13**，同步 6 处：pyproject / `__init__.py` / spec（动态读 pyproject，脚本提示 skip）/ app.js `MOCK_CONFIG.version` / modelscope_client USER_AGENT / config USER_AGENT
+- `rm -rf build/pyinstaller` + `python -m PyInstaller packaging/comfy-model-downloader.spec --noconfirm --distpath dist --workpath build/pyinstaller`
+- PlistBuddy 验证：`CFBundleName=CFBundleDisplayName=ComfyUI Model Downloader` / `CFBundleShortVersionString=0.1.13` / `CFBundleVersion=20261001135154` / `CFBundleIdentifier=cn.comfyuimodeldownloader.app`
+- 二进制 `Contents/MacOS/comfy-ui-model-downloader-0.1.13`（22 MB）
+
+### Git 与 Release
+
+- commit `dbe6475`「fix(audit): v0.1.13 紧急补丁」（10 个文件）
+- `git push origin Master`（需 `http.proxy=http://127.0.0.1:7892`）+ `git tag -a v0.1.13` + push tag
+- Release URL：https://github.com/Gaoyajing0810/ComfyUI-Model-Downloader/releases/tag/v0.1.13 （id `400684052`）
+  - `comfy-ui-model-downloader.app.zip`（68 MB）SHA256 `4f93c8b26daafab2594f58d5dc29da880787983874856c6f1fdb9475aeb32a40`
+  - `comfy-ui-model-downloader-0.1.13.tar.gz`（225 KB）SHA256 `9183376384750d3e2f54eea4f59dd3f02ed8f0163c11599ade809ba2bb3af639`
+- Release notes 源文件 `/tmp/comfy-release/RELEASE_NOTES.md`
+
+### 本轮踩坑（勿重犯）
+
+1. **bump 脚本误判 major** —— `python scripts/bump_version.py` 从 0.1.12 直接跳到 **1.0.0**。根因：commit `efcc716` 的 **body** 里包含字面 "BREAKING CHANGE"（在解释 type→bump 映射表的说明文字里），而 `detect_bump_kind` 用 `"BREAKING CHANGE" in msg.upper()` 对 subject+body 全文匹配。解法：`git checkout HEAD -- <6 个版本号文件>` 恢复后改用 `--patch`。
+2. **`git checkout` 把刚修好的 app.js 一起覆盖了** —— app.js 同时是「CRIT 修复文件」和「bump 要改的版本号文件」，checkout 触发后再修一遍才通过 `node --check`。**做版本 bump 前必须先确认待 checkout 的文件里有没有未提交的手工修复。**
+3. **GitHub Release 资产上传别用内联 curl + bash** —— 4 种写法全失败（模板 URL 未 strip 后缀 / multipart "Bad Size" / `${VAR%\{*\}` 引号转义）。最终解法：纯 Python `urllib.request` 脚本，`upload_template.split('{', 1)[0]` 去掉 `?name,label` 后缀再 POST。可复用脚本 `/tmp/comfy-release/upload_v0.1.13.py`。
+4. **zip 内路径冗长** —— `zip -qr out.zip /abs/path/app` 会把绝对路径写进 zip 条目，应先 `cd dist && zip -qr ../out.zip comfy-ui-model-downloader.app`。
+
+### 待跟进
+
+- **补前端 JS 语法门禁**：把 `node --check comfy_model_downloader/web/app.js` 塞进 `make test` 或 CI，PyInstaller 打包前跑一次。CRIT-1 能一路漏到发布资产，根因就是没有任何门禁。
+- **修 `bump_version.py` 的 BREAKING CHANGE 误判**：只匹配 commit subject 前缀（`^\w+(\([^)]*\))?!:`）或 body 独立行 `^BREAKING[ -]CHANGE:`，不要全文 `in`。
+- **补 JS 单测**：无任何前端测试，是 CRIT-1/2 漏检的第二原因。
+- **MEDIUM 清单待处理**（本轮用户选择跳过）：`cli.py` verify 的 `r['detail']` 可能为 None 打印字面 "None" / `downloader.py` retry 退避 `asyncio.sleep` 不响应 cancel / `server.py` 函数内重复 `import logging` / `pyproject.toml` 缺 `modelscope_hub` + `python-multipart` 显式依赖 / `safe_join` symlink 越界无测试覆盖。
+- **README 版本 badge 未被 bump 脚本同步**（手改，本次已手动更新到 0.1.13）—— 可加进 `bump_version.py` 的替换列表。

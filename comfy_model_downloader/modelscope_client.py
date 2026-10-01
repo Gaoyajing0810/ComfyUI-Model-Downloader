@@ -30,7 +30,7 @@ DEFAULT_ENDPOINT = "https://modelscope.cn"
 LEGACY_PREFIX = "/api/v1"
 DOLPHIN_SEARCH = f"{LEGACY_PREFIX}/dolphin/models"
 CHUNK = 1 << 20
-USER_AGENT = "comfy-ui-model-downloader/0.1.12 (ModelScope client)"
+USER_AGENT = "comfy-ui-model-downloader/0.1.13 (ModelScope client)"
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 
 

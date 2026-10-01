@@ -424,6 +424,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def _on_runner_done(t: asyncio.Task) -> None:
             _RUNNING.discard(t)
             exc = t.exception()
+            if isinstance(exc, asyncio.CancelledError):
+                if task.state == "running":
+                    task.state = "cancelled"
+                    task.finished_at = time.time()
+                    task.log("任务被取消")
+                return
             if exc is not None:
                 logging.getLogger(__name__).exception(
                     "download runner task %s crashed", task.task_id, exc_info=exc
@@ -494,8 +500,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.exception_handler(Exception)
-    async def on_error(_request: Any, exc: Exception) -> JSONResponse:
-        return JSONResponse(status_code=500, content={"detail": f"服务器内部错误：{exc}"})
+    async def on_error(_request: Request, exc: Exception) -> JSONResponse:
+        logging.getLogger(__name__).exception("Unhandled exception", exc_info=exc)
+        return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
 
     @app.websocket("/ws/heartbeat")
     async def ws_heartbeat(websocket: WebSocket) -> None:

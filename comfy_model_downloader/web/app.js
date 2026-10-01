@@ -320,7 +320,7 @@ const MOCK_CONFIG = {
   models_dir: '/Users/gaoyajing/Downloads/ComfyUI/models',
   modelscope_token_set: false,
   concurrency: 3,
-  version: '0.1.12',
+  version: '0.1.13',
   categories: [
     'checkpoints', 'loras', 'vae', 'text_encoders', 'diffusion_models', 'clip_vision',
     'controlnet', 'style_models', 'embeddings', 'upscale_models', 'photomaker', 'gligen',
@@ -1699,18 +1699,14 @@ async function startPoll(taskId) {
       pollTimer = null;
       continue;
     }
-    if (!pollOn) return;
+if (!pollOn) return;
     applyProgress(snap);
     if (snap.state !== 'running') break;
     await new Promise((r) => { pollTimer = setTimeout(r, 1000); });
     pollTimer = null;
   }
-    await sleep(POLL_MS);
-  }
-  stopPoll();
   announceFinal();
 }
-
 function applyProgress(snap) {
   S.progress = snap;
   const o = snap.overall || {};
@@ -2261,6 +2257,7 @@ let _hbWs = null;
 let _hbTimer = null;
 let _hbRetry = null;
 let _hbStop = false;
+let _hbFailCount = 0;       // 重连退避计数器：每次 onclose 失败指数翻倍（CRIT-2）
 
 function startHeartbeat() {
   if (USE_MOCK || _hbWs || _hbStop) return;
@@ -2280,11 +2277,10 @@ function startHeartbeat() {
     _hbTimer = null;
     if (_hbRetry) clearTimeout(_hbRetry);
     if (!_hbStop && document.readyState !== 'unloading') {
-      const delay = Math.min(30000, 1000 * Math.pow(2, _hbFailCount || 0));
-      _hbFailCount = (_hbFailCount || 0) + 1;
+      const delay = Math.min(30000, 1000 * Math.pow(2, _hbFailCount));
+      _hbFailCount += 1;
       _hbRetry = setTimeout(startHeartbeat, delay);
     }
-  };
   };
   ws.onerror = () => { /* 静默，由 onclose 接管重连 */ };
 }

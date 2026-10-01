@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-10-01
+
+### Added
+
+- **workflow:** Conventional Commits + SemVer + Keep a Changelog 自动化
+- **audit:** 二轮全审 + 10 项 + 5 条尾巴 + E1-E7 修复 + v0.1.12 重打包
+
+### Changed
+
+Gaoyajing
+Initial commit
+
 ## [0.1.12] — 2026-09-30
 
 ### Added

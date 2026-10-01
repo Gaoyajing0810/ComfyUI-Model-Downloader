@@ -313,9 +313,6 @@ make bump            # 或 python scripts/bump_version.py
 
 用户指令："审计代码，安全/逻辑/UI设计风格 → 细化设计 → 动手执行"。本会话按"先审后做"完成 10 项整改，全部 104 测试通过。**本会话未主动 commit/push**（用户未明确授权；上一轮 LIBRARY/HANDOFF 同步曾走 `git -c http(s).proxy=http://127.0.0.1:7892` + keychain `gho_*` token 完成 push，本会话未重复该模式）。
 
-### 关于子 agent
-当前环境可用 subagent 仅 `call_omo_agent(探索/图书)` 两种只读研究 agent；`background_task` 仅 `bootstrapper`。**无 implementation/subagent** 可调用——10 项代码改动全部由主 agent 顺序落地（分 5 个 batch，每批测一次）。前期并行的 4 个 `explore` agent 仅用于研究 grep/find-references（check_health 调用点、font-size 清单、列宽清单、DirectURLFetcher 用法），未做任何写操作。
-
 ### 10 项落地清单
 
 | # | 类别 | 标题 | 文件 | 关键改动 |
@@ -384,71 +381,7 @@ make bump            # 或 python scripts/bump_version.py
 
 ---
 
-## 二轮全量代码/功能审计（2026-09-30 10:30，未实施）
 
-用户指令："检查所有代码和功能还有哪些问题"。三个 `explore` agent 并行后台跑（~4-5m/agent），最终汇总 ~20 HIGH / ~25 MEDIUM / 4 LOW。**仅出清单，未动代码；等待用户决定哪一档优先**。新 .app 已重建于本轮之前的 10 项整改（含全部 CSS/JS 改动），与本审计清单无关。
-
-### HIGH（数据丢失 / 硬失败 / XSS / 状态污染）
-
-**后端**
-- `cli.py:310` — `_print_task_result` 用 `it.get('dest') or it.get('error')`，但 `dest` 总真值，error 永不显示；用户只看路径看不到失败原因
-- `cli.py:211` — `fetch` 无条件 `_print_plan(plan)` 在 `if as_json` 之前，`fetch --json` 输出被人类表格污染，JSON 不可解析
-- `downloader.py:225` — `meta.get("sha256")` 无 None 检查；`DirectURLFetcher.fetch` 取消时返 None → AttributeError 当成普通错误重试
-- `modelscope_client.py:331` — error 文本嵌入完整 presigned CDN URL（含 Signature/Expires/X-Amz-Credential）→ 流到 UI 和日志
-- `modelscope_client.py:471` — 同上，DirectURL 错误文本含用户提供的 URL（可能有 `?token=` 查询凭证）
-- `modelscope_client.py:138/172` — search 异常 → 空列表 → 用户看到 "未找到可信来源" 而非 "网络/鉴权失败"
-- `modelscope_client.py:328` — 416 → rename dest 不验 size；截断文件被 NO_CHECKSUM 接受为 "DONE"
-- `server.py:420` — `add_done_callback(_RUNNING.discard)` 永不取 exception → 任务 stuck "running" 永久
-- `server.py:483` — 全局 handler 返 `f"服务器内部错误：{exc}"` 给客户端 + 无 `logging.exception` 服务端留 traceback
-- `server.py:241` — `except TimeoutError` 不接 `concurrent.futures.TimeoutError`（py≤3.10 两类未统一，requires-python=">=3.10"），探测慢盘 500
-- `downloader.py:197+361-376` — `safe_join` ValueError 在 try 外 → 一个 item 杀全 batch + 任务 stuck "running" + 孤儿 worker
-- `config.py:173` — `write_text` 非原子，并发写/崩溃中途 → 下次 load ValueError → server 起不来
-- `config.py:167-171` — `save()` 重写只留 3 个 key，吞掉 retries/timeout/booleans/curated_path/token 等所有其他配置（含凭证）
-- `config.py:107-111 vs 127-128` — 优先级倒置：paths TOML>env（违反 docstring），concurrency/retries env>TOML → `serve --comfy-root` 被静默忽略
-- `config.py:53-59 + server.py:519` — 损坏 .toml → `app = create_app()` import 时 ValueError → 原始 traceback
-- `cleanup.py:43 + downloader.py:391` — 1d/7d mtime 阈值清 `*.part/*.tmp/*.download`，无活跃检测；续传任务活动 `.part` 被误删 → 多 GB 下载丢失
-
-**前端（XSS / 状态污染 / 双发）**
-- `app.js:1247` — `parse.format` server 值未 esc → XSS
-- `app.js:1384 + :1758` — `data-id="${it.id}"` 未 esc + it.id 无 num() 验证 → attribute injection XSS
-- `app.js:2082` — `p.model_file_count` 未 esc → XSS
-- `app.js:896-904` — `api.cancelTask()` non-mock 模式返 `Promise.resolve()` 永不调 server → "已取消" 假象，后台继续写
-- `app.js:1608-1630` — `startDownload()` 不 disable `#btnStart` → 双击启动两个并发下载 → 同文件 race 写
-
-### MEDIUM（错误处理 / 健壮性 / 一致性）
-
-- `downloader.py:236` — 重试 backoff `asyncio.sleep` 不查 cancel，最长 10s 延迟
-- `downloader.py:251` — `verify_file` 走 `asyncio.to_thread` 不传 `should_cancel`（接口已有，调用方不用）→ 20GB sha256 不可取消
-- `downloader.py:239` — `progress.error = str(last_error)` 不带尝试次数/异常类型/永久 4xx 区分
-- `downloader.py:281` — `_quarantine` `except OSError: pass` 无 log → 损坏文件留 models 目录装作模型
-- `downloader.py:267` — sha mismatch detail 不带 actual/expected hash，无法分辨截断 vs 代理注入
-- `server.py:290-297` — 启动 cleanup 只在 `models_dir` 显式设置时跑 + 同步在 event loop + `except Exception: pass` + logger 未配置
-- `downloader.py:293 + server.py:277/314` — `DownloadManager` 构造时把 `settings.concurrency` 快照进 `asyncio.Semaphore`，`/api/config` 改值运行时无效
-- `server.py:352+416` — `_PLANS` 旧 plan 指向旧 `models_dir`，改设置后下载写到老目录
-- `config.py:127-129` — 类型强转静默吞：`bool("false")→True`，`0→DEFAULT`，`"abc"→ValueError crash`，未知 key 静默丢
-- `config.py:168/170` — `save()` 路径未转义 `"` → 含引号路径下次 load 永久失败
-- `scan.py:183 + cleanup.py:41 + mapping.py:331` — symlink 跟随策略分歧：scan/cleanup `os.walk`/`rglob` 不跟（漏索引漏清理），`safe_join` `resolve()` 跟了（拒写入）→ 带 symlinked 子目录的用户双重隔离
-- `app.js:789` — `request()` `res.text()` 不在 try/catch + 无 AbortController/timeout
-- `app.js:1652-1662` — 一次 poll 失败永久死，UI 留 stale "下载中" 无 disconnected 状态
-- `app.js:2231-2239 + 2257` — WS 重连固定 3s 无 backoff/无 cap；`startHeartbeat` 仅 `boot()` 调 → 重连后心跳死
-- `app.js:2113-2120` — `saveSettings` 不验 min/max concurrency（输入 min=1/max=16 不强制）+ 不验 root 路径合法性
-- `app.js:2156-2158` — `browseFolder` 提前改 `S.config + renderConfig` → 取消不还原 topbar 显示
-- `app.js:1160-1172 + :1182` — drop/paste 无 type/size 校验，drop zone 重入无 guard
-- `app.js:1562-1563` — `form.elements.repo_id` undefined → TypeError，"候选来源"按钮死
-- `app.js:1896-1903` — `loadHistory` 失败清空 S.history 显示 "还没有下载记录" → 看起来像数据丢失
-- `styles.css:544 + :751-753 + :876` — `setMsg`/`toast` 写 `data-tone` 但 `.drop__file`/`.sheet__msg`/`.toast[warn]` 无对应 CSS → 错误视觉等同成功
-
-### LOW（隐私 / 一致性 / 死代码）
-
-- `app.js:1019-1020 / :1445 / :1818` — 绝对路径含 OS 用户名明文显示（截图/录屏泄漏）
-- `app.js:197-203` — `fmtTime` 本地时区无 tz 标签，log 行 UTC，时间戳显示不一致
-- `app.js:180` — `fmtEta` 死代码（ETA 从未显示）
-- `app.js:2156-2158` 部分 — browse 提前改 state 见 MED 中
-
-### 推荐修复顺序（按 ROI / 风险）
-
-1. **CLI 用户可见性**（cli.py:310 + :211）— 用户当前在 CLI 完全瞎，最快修
-2. **XSS 4 处**（app.js:1247/1384/1758/2082）— 单行 esc() 修，安全挡板
 3. **任务 stuck "running"**（server.py:420 + downloader.py:197+376 + downloader.py:225 取消 None）— 数据丢失/状态污染高风险，建议 batch 一起做
 4. **配置原子化 + 优先级**（config.py:173+167-171+107）— 配置层独立改，3 处相关但代码量小
 5. **前端用户状态反馈**（startDownload disable / cancelTask 真调 server / poll 重连 + heartbeat restart / styles.css tone）— 一组 UI 体验修复

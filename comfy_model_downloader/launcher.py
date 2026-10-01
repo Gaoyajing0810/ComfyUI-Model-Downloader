@@ -192,8 +192,6 @@ def _monitor_frontend(server, port: int) -> None:
     while not server.should_exit:
         time.sleep(HEARTBEAT_POLL)
         deadline = _server._shutdown_requested_at
-        if deadline > 0:
-            _say(f"DEBUG 监控: deadline={deadline:.3f} now={time.monotonic():.3f}")
         if deadline > 0 and time.monotonic() >= deadline:
             _say("前台请求关闭（倒计时已过），后台服务自动退出。")
             server.should_exit = True

@@ -191,6 +191,7 @@ async def _download_one(
     fetcher: ModelFetcher,
     settings: Settings,
     task: DownloadTask,
+    active_parts: set[Path] | None = None,
 ) -> None:
     source = item.source
     assert source.kind is not SourceKind.NONE
@@ -203,76 +204,83 @@ async def _download_one(
         return
     progress.dest = str(dest)
     progress.total = source.size or 0
-    meter = _SpeedMeter()
+    part_path = dest.with_name(dest.name + ".part")
+    if active_parts is not None:
+        active_parts.add(part_path)
+    try:
+        meter = _SpeedMeter()
 
-    def on_progress(done: int, total: int) -> None:
-        progress.downloaded = done
-        if total:
-            progress.total = total
-        progress.speed_bps = meter.bps
-        progress.message = f"已下载 {human_bytes(done)}"
+        def on_progress(done: int, total: int) -> None:
+            progress.downloaded = done
+            if total:
+                progress.total = total
+            progress.speed_bps = meter.bps
+            progress.message = f"已下载 {human_bytes(done)}"
 
-    last_error: Exception | None = None
-    for attempt in range(1, settings.retries + 1):
+        last_error: Exception | None = None
+        for attempt in range(1, settings.retries + 1):
+            if task.cancelled:
+                progress.state = DownloadState.PENDING
+                progress.message = "已取消"
+                return
+            progress.state = DownloadState.DOWNLOADING
+            progress.message = f"下载中（第 {attempt}/{settings.retries} 次尝试）"
+            task.log(f"开始下载 {item.ref.filename} -> {item.target_rel}")
+            try:
+                meta = await fetcher.fetch(
+                    source,
+                    dest,
+                    on_progress=on_progress,
+                    should_cancel=lambda: task.cancelled,
+                )
+                progress.sha256 = meta.get("sha256")
+                if meta.get("size"):
+                    progress.total = int(meta["size"])
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 逐项容错，单个失败不终止整批
+                last_error = exc
+                task.log(f"失败 {item.ref.filename}: {exc}")
+                progress.speed_bps = 0.0
+                if attempt < settings.retries:
+                    await asyncio.sleep(min(2 ** attempt, 10))
+        else:
+            progress.state = DownloadState.FAILED
+            progress.error = str(last_error)
+            progress.message = f"下载失败：{last_error}"
+            return
+
         if task.cancelled:
             progress.state = DownloadState.PENDING
             progress.message = "已取消"
             return
-        progress.state = DownloadState.DOWNLOADING
-        progress.message = f"下载中（第 {attempt}/{settings.retries} 次尝试）"
-        task.log(f"开始下载 {item.ref.filename} -> {item.target_rel}")
-        try:
-            meta = await fetcher.fetch(
-                source,
-                dest,
-                on_progress=on_progress,
-                should_cancel=lambda: task.cancelled,
-            )
-            progress.sha256 = meta.get("sha256")
-            if meta.get("size"):
-                progress.total = int(meta["size"])
-            break
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - 逐项容错，单个失败不终止整批
-            last_error = exc
-            task.log(f"失败 {item.ref.filename}: {exc}")
-            progress.speed_bps = 0.0
-            if attempt < settings.retries:
-                await asyncio.sleep(min(2 ** attempt, 10))
-    else:
-        progress.state = DownloadState.FAILED
-        progress.error = str(last_error)
-        progress.message = f"下载失败：{last_error}"
-        return
 
-    if task.cancelled:
-        progress.state = DownloadState.PENDING
-        progress.message = "已取消"
-        return
-
-    progress.state = DownloadState.VERIFYING
-    progress.message = "校验中"
-    progress.speed_bps = 0.0
-    result = await asyncio.to_thread(
-        verify_file,
-        dest,
-        source.size,
-        source.sha256,
-        settings.deep_verify,
-    )
-    if result.status in ACCEPTED_STATUSES:
-        progress.state = DownloadState.DONE
-        progress.downloaded = progress.total or dest.stat().st_size
-        suffix = "" if result.status is VerifyStatus.OK else "（远端未提供 sha256，已按文件头+大小校验）"
-        progress.message = f"完成 · {human_bytes(dest.stat().st_size)}{suffix}"
-        task.log(f"完成 {item.target_rel} ({result.status.value})")
-    else:
-        _quarantine(dest)
-        progress.state = DownloadState.FAILED
-        progress.error = f"{result.status.value}: {result.detail}"
-        progress.message = f"校验未通过（{result.status.value}）"
-        task.log(f"校验失败 {item.target_rel}: {result.detail}")
+        progress.state = DownloadState.VERIFYING
+        progress.message = "校验中"
+        progress.speed_bps = 0.0
+        result = await asyncio.to_thread(
+            verify_file,
+            dest,
+            source.size,
+            source.sha256,
+            settings.deep_verify,
+        )
+        if result.status in ACCEPTED_STATUSES:
+            progress.state = DownloadState.DONE
+            progress.downloaded = progress.total or dest.stat().st_size
+            suffix = "" if result.status is VerifyStatus.OK else "（远端未提供 sha256，已按文件头+大小校验）"
+            progress.message = f"完成 · {human_bytes(dest.stat().st_size)}{suffix}"
+            task.log(f"完成 {item.target_rel} ({result.status.value})")
+        else:
+            _quarantine(dest)
+            progress.state = DownloadState.FAILED
+            progress.error = f"{result.status.value}: {result.detail}"
+            progress.message = f"校验未通过（{result.status.value}）"
+            task.log(f"校验失败 {item.target_rel}: {result.detail}")
+    finally:
+        if active_parts is not None:
+            active_parts.discard(part_path)
 
 
 #: 视为下载成功的结果。远端未提供 sha256 时只能做文件头+大小校验，不该判为损坏。
@@ -373,7 +381,10 @@ class DownloadManager:
                 return
             async with sem:
                 try:
-                    await _download_one(item, progress, models_root, fetcher, self._settings, task)
+                    await _download_one(
+                        item, progress, models_root, fetcher, self._settings, task,
+                        active_parts=self._active_parts,
+                    )
                 except asyncio.CancelledError:
                     progress.state = DownloadState.PENDING
                     progress.message = "已取消"

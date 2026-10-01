@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_CONCURRENCY = 3
 DEFAULT_RETRIES = 3
 DEFAULT_TIMEOUT = 30.0
-USER_AGENT = "comfy-ui-model-downloader/0.1.12 (+https://github.com/comfyanonymous/ComfyUI)"
+USER_AGENT = "comfy-ui-model-downloader/0.1.13 (+https://github.com/comfyanonymous/ComfyUI)"
 
 _CONFIG_FILENAMES = ("comfy-ui-model-downloader.toml", ".comfy-ui-model-downloader.toml")
 
